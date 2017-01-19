@@ -1,0 +1,19 @@
+{
+    "tau": 0.6,
+    "characteristic_dimension": 0.0022,
+    "postproc_vel_mag": true,
+    "max_iter": 10000,
+    "viscosity": 1e-06,
+    "bnd_bottom": "wall_slip",
+    "postproc_dump_niter": 50,
+    "mesh": "mesh.dat",
+    "postproc_info_niter": 10,
+    "lu_x": 0.0001,
+    "bnd_right": "outlet",
+    "reynolds": 105,
+    "scale": 2,
+    "postproc_vel_ux": true,
+    "postproc_density": true,
+    "bnd_up": "wall_slip",
+    "bnd_left": "inlet_neq"
+}
