@@ -6,10 +6,12 @@
     Kruger et al., The Lattice Boltzmann Method Principles and Practice, Springer
 """
 
+import sys
 import json
 import logging
 import h5py
 import numpy
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
@@ -33,24 +35,6 @@ class Inputfile(object):
         self.postproc_vel_mag = "True"
         self.postproc_density = "True"
         self.postproc_vel_ux = "True"
-        # Default dico
-        #self.dico = dict(max_iter = 10000,
-        #                 mesh = "mesh.dat",
-        #                 reynolds = 105,
-        #                 lu_x = 1.E-4,
-        #                 scale = 2,
-        #                 characteristic_dimension = 2.2E-3,
-        #                 viscosity = 1.0E-6,
-        #                 bnd_bottom = "wall_slip",
-        #                 bnd_up = "wall_slip",
-        #                 bnd_left = "inlet_neq",
-        #                 bnd_right = "outlet",
-        #                 tau = 0.6,
-        #                 postproc_dump_niter = 50,
-        #                 postproc_info_niter = 10,
-        #                 postproc_vel_mag = True,
-        #                 postproc_density = True,
-        #                 postproc_vel_ux = True)
 
     def apply_inputfile(self, domain):
         """ apply inputfile """
@@ -112,9 +96,11 @@ class Domain(object):
         [self.np_x, self.np_y] = numpy.shape(my_scaled_mesh)
 
         self.solid = numpy.zeros((self.np_x, self.np_y), dtype=numpy.bool) 
+        self.fluid = numpy.zeros((self.np_x, self.np_y), dtype=numpy.bool) 
         for i_y in range(0, domain.np_y):
             for i_x in range(0, domain.np_x):
                 self.solid[i_x, i_y] = bool(my_scaled_mesh[i_x, i_y])
+                self.fluid[i_x, i_y] = not self.solid[i_x, i_y]
 
         mesh_file.close()
 
@@ -217,12 +203,12 @@ class Domain(object):
 
     def print_infos(self):
         """ Print infos about the domain """
-        print " == Infos about the domain =="
-        print "Dim x, y [m]     : ", self.l_x, self.l_y
-        print "dx       [m]     : ", self.lu_x
-        print "Nnodes x, y, x*y : ", self.np_x, self.np_y, self.np_x * self.np_y
-        print "L        [m]     : ", self.characteristic_dimension
-        print " ==                        =="
+        print(" == Infos about the domain ==")
+        print("Dim x, y [m]     : ", self.l_x, self.l_y)
+        print("dx       [m]     : ", self.lu_x)
+        print("Nnodes x, y, x*y : ", self.np_x, self.np_y, self.np_x * self.np_y)
+        print("L        [m]     : ", self.characteristic_dimension)
+        print(" ==                        ==")
 
     def write_hdf(self, iteration):
         """ write the solution """
@@ -327,13 +313,13 @@ class Lattice(object):
 
     def print_infos(self):
         """ Print infos """
-        print "Dim Q = ", self.dim_q
-        print "directions = ", self.directions
-        print "Weights = ", self.weights
-        print "BND no slip:", self.bnd_noslip
-        print "Direction & weights & noslip"
+        print("Dim Q = ", self.dim_q)
+        print("directions = ", self.directions)
+        print("Weights = ", self.weights)
+        print("BND no slip:", self.bnd_noslip)
+        print("Direction & weights & noslip")
         for index in range(self.dim_q):
-            print self.directions[index], " | ", self.weights[index], " | ", self.bnd_noslip[index]
+            print(self.directions[index], " | ", self.weights[index], " | ", self.bnd_noslip[index])
 
 
 def compute_equilibrium_function(domain, lattice, rho, u, explicit=False):
@@ -503,7 +489,7 @@ def apply_boundaries(domain, lattice, bnd_ux):
                                 domain.f_n[4, 0, :] +
                                  2. * (domain.f_n[6, 0, :] +
                                        domain.f_n[3, 0, :] +
-                                       domain.f_n[7, 0, :]))
+                                      domain.f_n[7, 0, :]))
                                  / (1. - bnd_ux))
        domain.f_tmp[5, 0, :] = (domain.f_n[7, 0, :]
                                 + (1. / 6.) * domain.density[0, :] * bnd_ux)
@@ -563,8 +549,9 @@ def apply_boundaries(domain, lattice, bnd_ux):
 def time_loop(domain, lattice, inputfile):
     """ Perform the time loop """
 
+    X, Y = numpy.meshgrid(numpy.arange(0, domain.l_x, domain.lu_x), numpy.arange(0, domain.l_y, domain.lu_x))
     bnd_ux = domain.velocity_lu
-    print " === Beginning iteration loop ... "
+    print(" === Beginning iteration loop ... ")
     for iteration in range(inputfile.dico['max_iter']):
         # Compute macroscopic density from f_tmp.
         domain.density = domain.compute_density(lattice, domain.f_tmp, explicit=False)
@@ -590,14 +577,14 @@ def time_loop(domain, lattice, inputfile):
         # Information
         it_str = "{:6.3f}".format(iteration*domain.delta_t)
         if iteration % inputfile.dico['postproc_info_niter'] == 0:
-            print "- it = " + str(iteration).zfill(6) + " - t [s] =" + it_str
+            print("- it = " + str(iteration).zfill(6) + " - t [s] =" + it_str)
 
         # Visu output
         if iteration % inputfile.dico['postproc_dump_niter'] == 0:
             if inputfile.dico['postproc_vel_mag']:
                 plt.clf()
-                plt.matshow(domain.c_vel*numpy.sqrt(domain.velocity[0]**2 + domain.velocity[1]**2).transpose(),
-                           cmap="jet", vmin=0, vmax=domain.c_vel*bnd_ux*1.3)
+                plt.matshow(numpy.ma.masked_array(domain.c_vel*numpy.sqrt(domain.velocity[0]**2 + domain.velocity[1]**2).transpose(), mask=domain.solid.transpose()),
+                           cmap="viridis", vmin=0, vmax=domain.c_vel*bnd_ux*4.)
                 plt.colorbar()
                 plt.suptitle(' Velocity [m/s] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
                 output_filename = "output/vel." + str(iteration).zfill(6) + ".png"
@@ -605,7 +592,7 @@ def time_loop(domain, lattice, inputfile):
                 plt.close()
             if inputfile.dico['postproc_density']:
                 plt.clf()
-                plt.matshow(domain.density.transpose(), cmap="jet")
+                plt.matshow(numpy.ma.masked_array(domain.density.transpose(), cmap="viridis", mask=domain.solid.transpose()))
                 plt.colorbar()
                 plt.suptitle(' Density [-] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
                 output_filename = "output/rho." + str(iteration).zfill(6) + ".png"
@@ -613,16 +600,32 @@ def time_loop(domain, lattice, inputfile):
                 plt.close()
             if inputfile.dico['postproc_vel_ux']:
                 plt.clf()
-                plt.matshow(domain.c_vel*domain.velocity[0].transpose(), cmap="jet")
+                plt.matshow(numpy.ma.masked_array(domain.c_vel*domain.velocity[0].transpose(), mask=domain.solid.transpose()), cmap="viridis")
                 plt.colorbar()
                 plt.suptitle(' U_x [m/s] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
                 plt.savefig("output/ux." + str(iteration).zfill(6) + ".png")
                 plt.close()
+            if inputfile.dico['postproc_vorticity']:
+                domain.vorticity = numpy.zeros((domain.np_x, domain.np_y))
+                for i_y in range(0, domain.np_y-1):
+                    for i_x in range(0, domain.np_x-1):
+                        domain.vorticity[i_x, i_y] = ((domain.velocity[1, i_x+1, i_y] -
+                                                       domain.velocity[1, i_x, i_y]) -
+                                                      (domain.velocity[0, i_x, i_y + 1] -
+                                                       domain.velocity[0, i_x, i_y]))
+                plt.clf()
+                vortmax = domain.velocity_lu/2.
+                plt.matshow(numpy.ma.masked_array(domain.vorticity.transpose(), cmap="viridis", mask=domain.solid.transpose()),
+                            vmin=-vortmax, vmax=vortmax)
+                plt.suptitle(' Vorticity [m2/s] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
+                plt.colorbar()
+                plt.savefig("output/vorticity." + str(iteration).zfill(6) + ".png")
+                plt.close()
 
 if __name__ == '__main__':
-    print "============================"
-    print "========== LBM 2D =========="
-    print "============================"
+    print("============================")
+    print("========== LBM 2D ==========")
+    print("============================")
 
     log = logging.getLogger(__name__)
 
@@ -631,7 +634,10 @@ if __name__ == '__main__':
     lattice = Lattice()
 
     # Inputfile
-    inputfile = Inputfile("inputfile")
+    if len(sys.argv) > 1:
+        inputfile = Inputfile(sys.argv[1])
+    else:
+        inputfile = Inputfile("inputfile")
     inputfile.apply_inputfile(domain)
     domain.velocity = (domain.viscosity * domain.reynolds) / domain.characteristic_dimension 
     domain.characteristic_dimension_lu = domain.characteristic_dimension * domain.lu_x # [lu]
@@ -646,15 +652,15 @@ if __name__ == '__main__':
     domain.c_vel = domain.lu_x / domain.delta_t
     domain.velocity_lu = domain.velocity / domain.c_vel
 
-    print " === INFOS == "
-    print " Reynolds : ", domain.reynolds
-    print " Viscosity [m2/s] : ", domain.viscosity
-    print " L [m] : ", domain.characteristic_dimension
-    print " L [lu] : ", domain.characteristic_dimension_lu
-    print " init and inlet velocity [m/s] :", domain.velocity
-    print " delta_t [s] :", domain.delta_t
-    print " conv_vel [m/s] : ", domain.c_vel
-    print " velocity [lu/ts] :", domain.velocity_lu
+    print(" === INFOS == ")
+    print(" Reynolds : ", domain.reynolds)
+    print(" Viscosity [m2/s] : ", domain.viscosity)
+    print(" L [m] : ", domain.characteristic_dimension)
+    print(" L [lu] : ", domain.characteristic_dimension_lu)
+    print(" init and inlet velocity [m/s] :", domain.velocity)
+    print(" delta_t [s] :", domain.delta_t)
+    print(" conv_vel [m/s] : ", domain.c_vel)
+    print(" velocity [lu/ts] :", domain.velocity_lu)
 
     ########
     # init
