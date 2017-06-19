@@ -14,6 +14,7 @@ import numpy
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from scipy.ndimage.filters import gaussian_filter
 
 class Inputfile(object):
     """ inputfile infos """
@@ -162,8 +163,27 @@ class Domain(object):
         """
 
         self.init_velocity = numpy.zeros((2, self.np_x, self.np_y))
-        self.init_velocity[0, :, :] = self.velocity_lu * (1- self.solid[:, :])
+        #self.init_velocity[0, :, :] = self.velocity_lu * (1- self.solid[:, :])
         self.velocity = self.init_velocity
+
+    def initialize_density(self):
+        """ Define the density on the domain
+        """
+
+        self.init_density = numpy.zeros((self.np_x, self.np_y))
+        self.init_density[:, :] = 80
+        for i_x in range(domain.np_x):
+            for i_y in range(domain.np_y):
+                # Gaussian
+                dist = numpy.sqrt((i_x-50)**2+(i_y-20)**2) 
+                self.init_density[i_x, i_y] += 420 * numpy.exp(-(dist*dist)/(2*10.0**2))
+                #dist = numpy.sqrt((i_x-60)**2+(i_y-70)**2) 
+                #self.init_density[i_x, i_y] += 10.0 * numpy.exp(-(dist*dist)/(2*6.0**2))
+                # Hard
+                #if i_x>20 and i_x<30 and i_y>20 and i_y<30:
+                #    self.init_density[i_x, i_y] += 10.0
+        
+        self.density = self.init_density
 
     def compute_velocity(self, lattice, f_in, explicit=False):
         """ Compute the macroscopic velocity which is an average of
@@ -327,6 +347,39 @@ def compute_equilibrium_function(domain, lattice, rho, u, explicit=False):
         see p35 eq 17 with the basic speed of the lattice
         set at c=1"""
 
+    # Add a volume force
+    # gravity
+    force = numpy.zeros(2)
+    force[0] = 0
+    force[1] = 0.0003
+    #u[0, :, :] = u[0, :, :] + domain.tau*force[0]/rho
+    u[1, :, :] = u[1, :, :] + domain.tau*force[1]
+    # Cohesion
+    psi0 = 4.0
+    rho0 = 200.0
+    G = 120.0
+    cohesion_force_buffer = numpy.zeros((2, domain.np_x, domain.np_y))
+    cohesion_force = numpy.zeros((2, domain.np_x, domain.np_y))
+    psi = numpy.zeros((domain.np_x, domain.np_y))
+    psi = psi0 * numpy.exp(-rho0/rho)
+    psi_streamed = numpy.zeros((lattice.dim_q, domain.np_x, domain.np_y))
+    for i_dir in range(lattice.dim_q):
+        psi_streamed[i_dir, :, :] = numpy.roll(numpy.roll(psi[:, :],
+                                                          lattice.directions[i_dir, 0],
+                                                          axis=0),
+                                               lattice.directions[i_dir, 1],
+                                               axis=1)
+    for i_dir in range(lattice.dim_q):
+        #print("Shape of weights:", numpy.shape(lattice.weights[i_dir]))
+        #print("Shape of directions:", numpy.shape(lattice.directions[i_dir, :]))
+        #print("Shape of streamed psi:", numpy.shape(psi_streamed[i_dir, :, :]))
+        cohesion_force_buffer[0, :, :] += lattice.weights[i_dir]*lattice.directions[i_dir, 0]*psi_streamed[i_dir, :, :]
+        cohesion_force_buffer[1, :, :] += lattice.weights[i_dir]*lattice.directions[i_dir, 1]*psi_streamed[i_dir, :, :]
+    cohesion_force[:, :, :] = -G * psi[:, :] * cohesion_force_buffer[:, :, :]
+    domain.cohesion_force = cohesion_force
+    u[0, :, :] = u[0, :, :] + domain.tau*cohesion_force[0, :, :]/rho
+    u[1, :, :] = u[1, :, :] + domain.tau*cohesion_force[1, :, :]/rho
+
     # Computation of ea.velocity
     if explicit:
         # Here is the explicit formulation
@@ -423,8 +476,10 @@ def initialize(domain, lattice):
     #domain.define_solid()
     # Initialize velocity
     domain.initialize_velocity()
+    # Initialize density
+    domain.initialize_density()
     # Initialize the equilibrium  distribution function with a density of one
-    domain.feq = compute_equilibrium_function(domain, lattice, 1.0, domain.init_velocity)
+    domain.feq = compute_equilibrium_function(domain, lattice,domain.init_density, domain.init_velocity)
     # Use it to initialize the distribution function
     domain.f_n = domain.feq.copy()
     domain.f_tmp = domain.feq.copy()
@@ -436,7 +491,7 @@ def apply_boundaries(domain, lattice, bnd_ux):
         Initialize rho, u, fi, fi_eq
     """
 
-    if domain.bnd_left == "perio":
+    if domain.bnd_left == "periodic":
        pass # Nothing to do
     elif domain.bnd_left == "wall_noslip":
        # bounce back
@@ -497,7 +552,7 @@ def apply_boundaries(domain, lattice, bnd_ux):
        domain.f_tmp[8, 0, :] = (domain.f_n[6, 0, :]
                                  + (1. / 6.) * domain.density[0, :] * bnd_ux)
 
-    if domain.bnd_right == "perio":
+    if domain.bnd_right == "periodic":
        pass # Nothing to do
     elif domain.bnd_right == "wall_noslip":
        for i_dir in range(lattice.dim_q):
@@ -526,7 +581,7 @@ def apply_boundaries(domain, lattice, bnd_ux):
        domain.f_tmp[3, -1, :] = 2. * domain.f_tmp[3, -2, :] - domain.f_tmp[3, -3, :]
        domain.f_tmp[7, -1, :] = 2. * domain.f_tmp[7, -2, :] - domain.f_tmp[7, -3, :]
 
-    if domain.bnd_bottom == "perio":
+    if domain.bnd_bottom == "periodic":
        pass # Nothing to do
     elif domain.bnd_bottom == "wall_noslip":
        for i_dir in range(lattice.dim_q):
@@ -535,7 +590,7 @@ def apply_boundaries(domain, lattice, bnd_ux):
        for i_dir in range(lattice.dim_q):
            domain.f_tmp[i_dir, :, 0] = domain.f_n[lattice.bnd_slip_x[i_dir], :, 0]
 
-    if domain.bnd_up == "perio":
+    if domain.bnd_up == "periodic":
        pass # Nothing to do
     elif domain.bnd_up == "wall_noslip":
        for i_dir in range(lattice.dim_q):
@@ -555,9 +610,14 @@ def time_loop(domain, lattice, inputfile):
     for iteration in range(inputfile.dico['max_iter']):
         # Compute macroscopic density from f_tmp.
         domain.density = domain.compute_density(lattice, domain.f_tmp, explicit=False)
-
+        
         # Compute macroscopic velocity from f_tmp.
         domain.velocity = domain.compute_velocity(lattice, domain.f_tmp, explicit=False)
+
+        # Filtering
+        #domain.density = gaussian_filter(domain.density, 0.1)
+        #domain.velocity[0, :, :] = gaussian_filter(domain.velocity[0, :, :], 0.5)
+        #domain.velocity[1, :, :] = gaussian_filter(domain.velocity[1, :, :], 0.5)
 
         # Compute the equilibrium distribution function.
         domain.feq = compute_equilibrium_function(domain, lattice, domain.density, domain.velocity)
@@ -604,6 +664,27 @@ def time_loop(domain, lattice, inputfile):
                 plt.colorbar()
                 plt.suptitle(' U_x [m/s] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
                 plt.savefig("output/ux." + str(iteration).zfill(6) + ".png")
+                plt.close()
+            if inputfile.dico['postproc_vel_uy']:
+                plt.clf()
+                plt.matshow(numpy.ma.masked_array(domain.c_vel*domain.velocity[1].transpose(), mask=domain.solid.transpose()), cmap="viridis")
+                plt.colorbar()
+                plt.suptitle(' U_y [m/s] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
+                plt.savefig("output/uy." + str(iteration).zfill(6) + ".png")
+                plt.close()
+            if inputfile.dico['postproc_force_x']:
+                plt.clf()
+                plt.matshow(numpy.ma.masked_array(domain.c_vel*domain.cohesion_force[0].transpose(), mask=domain.solid.transpose()), cmap="viridis")
+                plt.colorbar()
+                plt.suptitle(' F [-] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
+                plt.savefig("output/fx." + str(iteration).zfill(6) + ".png")
+                plt.close()
+            if inputfile.dico['postproc_force_y']:
+                plt.clf()
+                plt.matshow(numpy.ma.masked_array(domain.c_vel*domain.cohesion_force[1].transpose(), mask=domain.solid.transpose()), cmap="viridis")
+                plt.colorbar()
+                plt.suptitle(' F_y [-] - it ' + str(iteration).zfill(6) + ' - t [s] ' + it_str)
+                plt.savefig("output/fy." + str(iteration).zfill(6) + ".png")
                 plt.close()
             if inputfile.dico['postproc_vorticity']:
                 domain.vorticity = numpy.zeros((domain.np_x, domain.np_y))
